@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Image Feed</title>
+<style>
+body{
+  font-family:Arial, sans-serif;
+  max-width:1000px;
+  margin:auto;
+  background:#f4f4f4;
+  padding:10px;
+}
+
+h1{text-align:center;}
+
+h1 img {
+  max-height:50px;
+  vertical-align:middle;
+  margin-right:10px;
+}
+
+#message{color:red;margin-bottom:10px;}
+
+#usernameDisplay{
+  position:fixed;
+  top:10px;
+  right:10px;
+  background:#eee;
+  padding:8px 12px;
+  border-radius:6px;
+  box-shadow:0 2px 6px rgba(0,0,0,0.1);
+}
+
+#feed{margin-top:20px;}
+
+
+.post{
+  background:white;
+  padding:10px;
+  margin-top:20px;
+  border-radius:6px;
+  transition:0.2s;
+}
+.post.ownPost{border:4px solid green;}
+.post.otherPost{border:2px solid #aaa;transform:scale(0.96);opacity:0.9;}
+
+
+.postHeader{
+  font-weight:bold;
+  margin-bottom:8px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+
+
+.postContent{
+  display:grid;
+  grid-template-columns: 1fr 300px;
+  gap:10px;
+}
+.post img{width:100%;border-radius:4px;}
+
+
+.comments{
+  background:#fafafa;
+  border-left:1px solid #ddd;
+  padding:6px;
+  max-height:300px;
+  overflow-y:auto;
+}
+.comment{
+  border-bottom:1px solid #ddd;
+  padding:4px;
+  font-size:14px;
+  display:flex;
+  justify-content:space-between;
+}
+
+
+.commentForm{margin-top:6px;}
+.commentForm input{width:70%;}
+
+
+.deleteBtn{
+  background:red;
+  color:white;
+  border:none;
+  padding:5px 10px;
+  border-radius:4px;
+  cursor:pointer;
+  opacity:0;
+  transition:0.2s;
+}
+.post:hover .deleteBtn{opacity:1;}
+
+
+@media(max-width:700px){
+  .postContent{grid-template-columns:1fr;}
+  .comments{
+    display:flex;
+    overflow-x:auto;
+    border-left:none;
+    border-top:1px solid #ddd;
+  }
+  .comment{
+    min-width:200px;
+    margin-right:10px;
+    border:1px solid #ddd;
+    border-radius:4px;
+    padding:6px;
+  }
+}
+</style>
+</head>
+<body>
+
+<h1>
+  <img src="logo.png" alt="Site Logo">
+  Тухлый Апельсин
+</h1>
+
+<div id="usernameDisplay" style="display:none;">
+Logged in as <span id="currentUser"></span>
+<button onclick="logout()">Logout</button>
+</div>
+
+<div id="message"></div>
+
+<div id="loginSection">
+<h3>Login</h3>
+<input id="loginUser" placeholder="username">
+<input id="loginPass" type="password" placeholder="password">
+<button onclick="login()">Login</button>
+
+<h3>Register</h3>
+<input id="regUser" placeholder="username">
+<input id="regPass" type="password" placeholder="password">
+<button onclick="register()">Register</button>
+</div>
+
+
+<div id="feedSection" style="display:none;">
+<form id="uploadForm">
+<input type="file" name="image" required>
+<button>Post Image</button>
+</form>
+
+<div id="feed"></div>
+</div>
+
+<script>
+let currentUser="";
+let page=0;
+const pageSize=5;
+
+
+function showMessage(text){
+  document.getElementById("message").innerText=text;
+}
+
+async function checkLogin(){
+  const res=await fetch("/profile");
+  const data=await res.json();
+  if(data.logged){
+    currentUser=data.user;
+    document.getElementById("loginSection").style.display="none";
+    document.getElementById("feedSection").style.display="block";
+    document.getElementById("usernameDisplay").style.display="block";
+    document.getElementById("currentUser").innerText=currentUser;
+    loadPosts(true);
+    startLiveUpdates(); 
+  } else{
+    document.getElementById("loginSection").style.display="block";
+    document.getElementById("feedSection").style.display="none";
+  }
+}
+
+
+async function register(){
+  const username=document.getElementById("regUser").value;
+  const password=document.getElementById("regPass").value;
+  const res=await fetch("/register",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({username,password})
+  });
+  const data=await res.json();
+  showMessage(data.success ? "Registered! You can login now." : data.message);
+}
+
+
+async function login(){
+  const username=document.getElementById("loginUser").value;
+  const password=document.getElementById("loginPass").value;
+  const res=await fetch("/login",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({username,password})
+  });
+  const data=await res.json();
+  showMessage("");
+  if(data.success) checkLogin();
+  else showMessage(data.message);
+}
+
+
+async function logout(){
+  await fetch("/logout");
+  location.reload();
+}
+
+
+document.getElementById("uploadForm").onsubmit=async e=>{
+  e.preventDefault();
+  const form=new FormData(e.target);
+  const res=await fetch("/upload",{method:"POST", body:form});
+  const data=await res.json();
+  if(!data.success) showMessage(data.message);
+  else { showMessage(""); page=0; loadPosts(true);}
+};
+
+
+async function loadPosts(reset=false){
+  if(page===0 || reset) page=0;
+  const res=await fetch("/posts");
+  const allPosts=await res.json();
+  const feed=document.getElementById("feed");
+  if(reset && page===0) feed.innerHTML=""; 
+  const start=page*pageSize;
+  const end=start+pageSize;
+  const posts=allPosts.slice(start,end);
+  posts.forEach(renderPost);
+  page++;
+}
+
+
+function renderPost(p){
+
+  let post=document.getElementById("post-"+p.id);
+  if(!post){
+    post=document.createElement("div");
+    post.id = "post-"+p.id;
+    post.className=(p.username===currentUser)?"post ownPost":"post otherPost";
+
+    const header=document.createElement("div");
+    header.className="postHeader";
+
+    const author=document.createElement("span");
+    author.innerText=p.username+(p.username===currentUser?" (You)":"");
+
+    const counter=document.createElement("span");
+    counter.id="count-"+p.id;
+    counter.style.fontSize="12px";
+    counter.style.color="gray";
+    counter.style.marginLeft="8px";
+    counter.innerText="(0 comments)";
+
+    header.appendChild(author);
+    header.appendChild(counter);
+
+    if(p.username===currentUser){
+      const del=document.createElement("button");
+      del.innerText="Delete";
+      del.className="deleteBtn";
+      del.onclick=()=>deletePost(p.id);
+      header.appendChild(del);
+    }
+
+    post.appendChild(header);
+
+    const content=document.createElement("div");
+    content.className="postContent";
+
+    const img=document.createElement("img");
+    img.src=p.image;
+    img.loading="lazy";
+    content.appendChild(img);
+
+    const commentsPanel=document.createElement("div");
+    commentsPanel.className="comments";
+    commentsPanel.id="comments-"+p.id;
+    commentsPanel.style.display="flex";
+    commentsPanel.style.flexDirection="column";
+    commentsPanel.style.maxHeight="300px";
+    commentsPanel.style.overflowX="auto";
+    commentsPanel.style.overflowY="auto";
+    commentsPanel.style.gap="4px";
+    content.appendChild(commentsPanel);
+
+    post.appendChild(content);
+
+    
+    const form=document.createElement("form");
+    form.className="commentForm";
+    const input=document.createElement("input");
+    input.placeholder="Add comment";
+    input.maxLength=150;
+    const btn=document.createElement("button");
+    btn.innerText="Post";
+    form.appendChild(input);
+    form.appendChild(btn);
+
+    form.onsubmit=async e=>{
+      e.preventDefault();
+      const text=input.value.trim();
+      if(!text) return;
+      const res=await fetch("/comment/"+p.id,{
+        method:"POST",
+        headers:{"Content-Type":"application/x-www-form-urlencoded"},
+        body:"text="+encodeURIComponent(text)
+      });
+      const data=await res.json();
+      if(!data.success) showMessage(data.message);
+      else { input.value=""; loadComments(p.id, p.username); }
+    };
+
+    post.appendChild(form);
+    document.getElementById("feed").appendChild(post);
+  }
+
+  
+  loadComments(p.id, p.username);
+}
+
+
+async function loadComments(postId, postOwner){
+  const container = document.getElementById("comments-"+postId);
+  if(!container) return;
+
+ 
+  const form = container.nextElementSibling;
+  const input = form ? form.querySelector("input") : null;
+  const currentText = input ? input.value : "";
+
+  const res = await fetch("/comments/"+postId);
+  const comments = await res.json();
+  container.innerHTML="";
+
+  const counter=document.getElementById("count-"+postId);
+  if(counter) counter.innerText=`(${comments.length} comments)`;
+
+  comments.forEach(c=>{
+    const div=document.createElement("div");
+    div.className="comment";
+    div.style.minWidth="180px";
+    div.style.border="1px solid #ddd";
+    div.style.padding="4px";
+    div.style.borderRadius="4px";
+    div.style.marginBottom="4px";
+
+    if(c.username === postOwner){
+      div.style.backgroundColor="#e0ffe0";
+      div.style.fontWeight="bold";
+    }
+
+    const text=document.createElement("span");
+    text.innerText=c.username+": "+c.text;
+    div.appendChild(text);
+
+    if(c.username===currentUser){
+      const btn=document.createElement("button");
+      btn.innerText="Delete";
+      btn.onclick=()=>deleteComment(c.id,postId);
+      div.appendChild(btn);
+    }
+
+    container.appendChild(div);
+  });
+
+  
+  if(input) input.value=currentText;
+
+ 
+  if(window.innerWidth <= 700){
+    container.style.flexDirection="row";
+    container.style.overflowX="auto";
+    container.style.overflowY="hidden";
+  } else{
+    container.style.flexDirection="column";
+    container.style.overflowY="auto";
+    container.style.overflowX="hidden";
+  }
+}
+
+
+async function deletePost(id){
+  if(!confirm("Delete post?")) return;
+  const res=await fetch("/delete/"+id,{method:"POST"});
+  const data=await res.json();
+  if(data.success){ page=0; loadPosts(true);}
+}
+
+
+async function deleteComment(id,postId){
+  if(!confirm("Delete comment?")) return;
+  const res=await fetch("/delete-comment/"+id,{method:"POST"});
+  const data=await res.json();
+  if(data.success) loadComments(postId);
+}
+
+
+window.addEventListener("scroll", ()=>{
+  if(window.innerHeight + window.scrollY >= document.body.offsetHeight-50){
+    loadPosts();
+  }
+});
+
+function startLiveUpdates(){
+  setInterval(()=>{
+
+    loadPosts(false);
+
+
+    document.querySelectorAll(".post").forEach(post=>{
+      const postId = post.id.split("-")[1];
+      const postOwner = post.querySelector(".postHeader span").innerText.replace(" (You)","");
+      loadComments(postId, postOwner);
+    });
+  }, 3000); 
+}
+
+
+checkLogin();
+</script>
